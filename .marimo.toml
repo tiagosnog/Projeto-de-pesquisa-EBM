@@ -1,0 +1,18 @@
+# Configuração do Marimo para o projeto
+
+[display]
+# Tema padrão (light, dark, ou auto)
+theme = "auto"
+
+[runtime]
+# Executar automaticamente ao abrir
+auto_instantiate = true
+
+[server]
+# Porta padrão para o servidor
+port = 8080
+
+[formatting]
+# Usar black para formatação
+line_length = 100
+

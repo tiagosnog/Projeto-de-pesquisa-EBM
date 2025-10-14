@@ -1,0 +1,44 @@
+[project]
+name = "projeto-pesquisa-ebm"
+version = "0.1.0"
+description = "Projeto de pesquisa para o mestrado em Engenharia Biomédica UFABC"
+authors = [
+    {name = "Tiago Snog", email = "tiagosnog@users.noreply.github.com"}
+]
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.24.0",
+    "pandas>=2.0.0",
+    "matplotlib>=3.7.0",
+    "scipy>=1.10.0",
+    "openpyxl>=3.1.0",
+    "marimo>=0.9.0",
+    "sympy>=1.14.0",
+    "optuna>=3.0.0",
+    "plotly>=6.3.1",
+    "scikit-learn>=1.7.2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "black>=23.0.0",
+    "ruff>=0.1.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/projeto_pesquisa_ebm"]
+
+[tool.black]
+line-length = 100
+target-version = ['py310']
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
