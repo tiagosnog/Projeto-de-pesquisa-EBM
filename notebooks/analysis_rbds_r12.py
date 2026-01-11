@@ -17,7 +17,6 @@ def _():
     import pandas as pd
     import sympy as sp
     from scipy.signal import decimate, welch
-
     from scipy.optimize import minimize
     from scipy.integrate import solve_ivp
     return minimize, np, pd, plt, solve_ivp, sp, welch
@@ -51,7 +50,7 @@ def _(mo):
 
 
 @app.cell
-def _(np, pd, plt):
+def _(np, pd):
     def load_marker_data(filename, data_path='./data/raw/'):
         """
         Carrega dados de marcadores e calcula posições, velocidades e acelerações.
@@ -65,65 +64,35 @@ def _(np, pd, plt):
         """
         data = pd.read_csv(data_path + filename, sep='\t')
 
-        # Calcular trunk (média dos marcadores ASIS e PSIS)
+        # Calcular tronco (média do marcadore ASIS e PSIS)
         # Se os marcadores ASIS/PSIS tiverem NaN, usar fallback (média entre knee e crest)
         trunk_mm = (data[['R.ASISX', 'R.ASISY', 'R.ASISZ']].values +
-                    data[['L.ASISX', 'L.ASISY', 'L.ASISZ']].values +
-                    data[['R.PSISX', 'R.PSISY', 'R.PSISZ']].values +
-                    data[['L.PSISX', 'L.PSISY', 'L.PSISZ']].values) / 4
+                    data[['R.PSISX', 'R.PSISY', 'R.PSISZ']].values/4)
 
         # Verificar se trunk tem NaN e usar fallback se necessário
         if np.any(np.isnan(trunk_mm)):
             print(f"⚠️ AVISO: Marcadores ASIS/PSIS com NaN em {filename}")
             print("   Usando fallback: trunk = média entre knee e crest")
 
-            # Calcular knee e crest
-            knee = (data[['L.Shank.Top.MedialX', 'L.Shank.Top.MedialY', 'L.Shank.Top.MedialZ']].values +
-                    data[['R.Shank.Top.MedialX', 'R.Shank.Top.MedialY', 'R.Shank.Top.MedialZ']].values) / 2
-            crest = (data[['R.Iliac.CrestX','R.Iliac.CrestY','R.Iliac.CrestZ']].values +
-                     data[['L.Iliac.CrestX','L.Iliac.CrestY','L.Iliac.CrestZ']].values) / 2
+            # Calcular crest
 
-            # # Trunk = média entre knee e crest (aproximação razoável)
-            # trunk_mm = (knee + crest) / 2
+            crest = (data[['R.Iliac.CrestX','R.Iliac.CrestY','R.Iliac.CrestZ']].values)                     
 
-        # Calcular heel (pé direito)
-        heel = data[['R.Heel.TopX','R.Heel.TopY','R.Heel.TopZ']].values
+            # Trunk = média entre knee e crest (aproximação razoável)
+            trunk_mm = crest
 
+        # Calcular metatarsal (pé direito)
+        metatarsal = data[['R.MT1X','R.MT1Y','R.MT1Z']].values
         time = data['Time'].values
-
-        # IMPORTANTE: Usar eixo Y (índice 1) = VERTICAL (Fukuchi 2017)
-        p1 = heel[:, 1] / 1000  # Eixo Y do heel = VERTICAL
-        v1 = np.gradient(p1, time)
-        a1 = np.gradient(v1, time)
 
         return {
             'time': time,
-            'p1': p1,
-            'v1': v1,
-            'a1': a1,
-            'trunk_mm': trunk_mm,
             'data': data
         }
 
     # Carregar dados T45 para otimização
     marker_data_opt = load_marker_data('RBDS002runT45markers.txt')
-
-    plt.figure()
-    plt.plot(marker_data_opt['time'], marker_data_opt['p1'], color='r',
-             label='heel position (Y axis - VERTICAL) - Dados Dinâmicos T45')
-    plt.xlabel('tempo (s)')
-    plt.ylabel('p1 (m) - eixo Y (VERTICAL)')
-    plt.legend()
-    plt.grid(True)
-    plt.show()
     return (marker_data_opt,)
-
-
-# @app.cell
-# def _():
-#     # pd.set_option('display.max_columns', None)
-#     # data_static
-#     return
 
 
 @app.cell
@@ -138,31 +107,35 @@ def _(marker_data_opt, np, plt):
         Returns:
             dict com p1-p4, v1-v4, a1-a4
         """
-        data = marker_data['data']
-        time = marker_data['time']
-        trunk_mm = marker_data['trunk_mm']
+        data = marker_data_opt['data']
+        time = marker_data_opt['time']
 
-        # Massa 2: Knee (joelho)
-        knee = (data[['L.Shank.Top.MedialX', 'L.Shank.Top.MedialY', 'L.Shank.Top.MedialZ']].values +
-                data[['R.Shank.Top.MedialX', 'R.Shank.Top.MedialY', 'R.Shank.Top.MedialZ']].values) / 2
-        p2 = knee[:, 1] / 1000
+        # Massa 1: Right 1st metatarsal (metatarso)
+        metatarsal = data[['R.MT1X','R.MT1Y','R.MT1Z']].values                     
+        p1 = metatarsal[:, 1]/1000  # Eixo Y do metatarso = VERTICAL
+        v1 = np.gradient(p1, time)
+        a1 = np.gradient(v1, time)
+
+        # Massa 2: Right shank bottom medial marker (medial inferior da perna direita)
+        shank_bottom_medial = (data[['R.Shank.Top.MedialX', 'R.Shank.Top.MedialY', 'R.Shank.Top.MedialZ']].values)
+        p2 = shank_bottom_medial[:, 1]/1000
         v2 = np.gradient(p2, time)
         a2 = np.gradient(v2, time)
 
-        # Massa 3: Trunk (tronco)
-        p3 = trunk_mm[:, 1] / 1000  # usando coordenada Y do trunk (VERTICAL)
+        # Massa 3: Right thigh bottom lateral (lateral inferior da coxa direita)
+        thigh_bottom_lateral = (data[['R.Thigh.Bottom.LateralX', 'R.Thigh.Bottom.LateralY', 'R.Thigh.Bottom.LateralZ']].values)
+        p3 = thigh_bottom_lateral[:, 1]/1000  
         v3 = np.gradient(p3, time)
         a3 = np.gradient(v3, time)
 
         # Massa 4: Iliac Crest (crista ilíaca)
-        crest = (data[['R.Iliac.CrestX','R.Iliac.CrestY','R.Iliac.CrestZ']].values +
-                 data[['L.Iliac.CrestX','L.Iliac.CrestY','L.Iliac.CrestZ']].values) / 2
-        p4 = crest[:, 1] / 1000  # usando coordenada Y (VERTICAL)
+        iliacal_crest = (data[['R.Iliac.CrestX','R.Iliac.CrestY','R.Iliac.CrestZ']].values)                 
+        p4 = iliacal_crest[:, 1]/1000 
         v4 = np.gradient(p4, time)
         a4 = np.gradient(v4, time)
 
         return {
-            'p1': marker_data['p1'], 'v1': marker_data['v1'], 'a1': marker_data['a1'],
+            'p1': p1, 'v1': v1, 'a1': a1,
             'p2': p2, 'v2': v2, 'a2': a2,
             'p3': p3, 'v3': v3, 'a3': a3,
             'p4': p4, 'v4': v4, 'a4': a4,
@@ -173,9 +146,9 @@ def _(marker_data_opt, np, plt):
     positions_opt = calculate_all_positions(marker_data_opt)
 
     plt.figure()
-    plt.plot(positions_opt['time'], positions_opt['p2'], label='p2_s - Dados Dinâmicos T45', color='b')
+    plt.plot(positions_opt['time'], positions_opt['p1'], label='p1_s - Dados Dinâmicos T45', color='b',linewidth=1)
     plt.xlabel('tempo (s)')
-    plt.ylabel('p2 (m)')
+    plt.ylabel('p1 (m)')
     plt.legend()
     plt.grid(True)
     plt.show()
@@ -242,41 +215,43 @@ def _(np, pd, plt):
     data_dynamic = pd.read_csv('./data/raw/RBDS002runT25markers.txt', sep='\t')
     td = data_dynamic['Time'].values[1]
 
-    heel_d = (data_dynamic[['R.Heel.TopX','R.Heel.TopY','R.Heel.TopZ']].values)
+    r_1_metatarsal = (data_dynamic[['R.MT1X','R.MT1Y','R.MT1Z']].values)
 
-    knee_d = (data_dynamic[['L.Shank.Top.MedialX','L.Shank.Top.MedialY','L.Shank.Top.MedialZ']].values + data_dynamic[['R.Shank.Top.MedialX','R.Shank.Top.MedialY','R.Shank.Top.MedialZ']].values)/2
+    r_shank_bottom_medial = (data_dynamic[['R.Shank.Bottom.MedialX','R.Shank.Bottom.MedialY','R.Shank.Bottom.MedialZ']].values)
 
-    trunk_d = (data_dynamic[['R.ASISX', 'R.ASISY', 'R.ASISZ']].values + data_dynamic[['L.ASISX', 'L.ASISY', 'L.ASISZ']].values + data_dynamic[['R.PSISX', 'R.PSISY', 'R.PSISZ']].values + data_dynamic[['L.PSISX', 'L.PSISY', 'L.PSISZ']].values)/4
+    r_thigh_bottom_lateral = (data_dynamic[['R.Thigh.Bottom.LateralX','R.Thigh.Bottom.LateralY','R.Thigh.Bottom.LateralZ']].values)
 
-    crest_d = (data_dynamic[['R.Iliac.CrestX','R.Iliac.CrestY','R.Iliac.CrestZ']].values + data_dynamic[['L.Iliac.CrestX','L.Iliac.CrestY','L.Iliac.CrestZ']].values)/2
+    r_iliac_crest = (data_dynamic[['R.Iliac.CrestX','R.Iliac.CrestY','R.Iliac.CrestZ']].values)
 
     time_d = data_dynamic['Time'].values                              #s
+
 
     # Dados experimentais (referência: solo, cresce para cima)
     # IMPORTANTE: Usando eixo Y (índice 1) = VERTICAL (Fukuchi 2017)
     # Eixo Y = direção vertical - onde ocorre o impacto durante a corrida
     # Mesma convenção dos dados estáticos para consistência
-    p1_d_exp = heel_d[:,1]/1000                                       #m (eixo Y - VERTICAL)
+
+    p1_d_exp = r_1_metatarsal[:,1]/1000                               #m (eixo Y VERTICAL)
     v1_d_exp = np.gradient(p1_d_exp, time_d)                          #m/s
     a1_d_exp = np.gradient(v1_d_exp, time_d)                          #m/s²
 
-    p2_d_exp = knee_d[:,1]/1000                                       #m (eixo Y - VERTICAL)
+    p2_d_exp = r_shank_bottom_medial[:,1]/1000                        #m (eixo Y VERTICAL)
     v2_d_exp = np.gradient(p2_d_exp, time_d)                          #m/s
     a2_d_exp = np.gradient(v2_d_exp, time_d)                          #m/s²
 
-    p3_d_exp = trunk_d[:,1]/1000                                      #m (eixo Y - VERTICAL)
+    p3_d_exp = r_thigh_bottom_lateral[:,1]/1000                       #m (eixo Y VERTICAL)
     v3_d_exp = np.gradient(p3_d_exp, time_d)                          #m/s
     a3_d_exp = np.gradient(v3_d_exp, time_d)                          #m/s²
 
-    p4_d_exp = crest_d[:,1]/1000                                      #m (eixo Y - VERTICAL)
+    p4_d_exp = r_iliac_crest[:,1]/1000                                #m (eixo Y VERTICAL)
     v4_d_exp = np.gradient(p4_d_exp, time_d)                          #m/s
     a4_d_exp = np.gradient(v4_d_exp, time_d)                          #m/s²
 
-    plt.figure(figsize=(10,5))
-    plt.plot(time_d, p1_d_exp, color="orange", alpha=0.7, label="p1 (experimental)")
-    plt.plot(time_d, p2_d_exp, color="b",      alpha=0.7, label="p2 (experimental)")
-    plt.plot(time_d, p3_d_exp, color="r",      alpha=0.7, label="p3 (experimental)")
-    plt.plot(time_d, p4_d_exp, color="g",      alpha=0.7, label="p4 (experimental)")
+    plt.figure(figsize=(10,7))
+    plt.plot(time_d, p1_d_exp, color="orange", alpha=0.7, label="p1 (metatarso)")
+    plt.plot(time_d, p2_d_exp, color="b",      alpha=0.7, label="p2 (canela)")
+    plt.plot(time_d, p3_d_exp, color="r",      alpha=0.7, label="p3 (coxa)")
+    plt.plot(time_d, p4_d_exp, color="g",      alpha=0.7, label="p4 (crista ilíaca)")
     plt.xlim(0, 10)
     plt.xlabel("tempo (s)")
     plt.ylabel("posição (m) - referência: solo")
@@ -303,6 +278,7 @@ def _(mo):
     )
     return
 
+
 @app.cell
 def _(np, p1_d_exp, p2_d_exp, p3_d_exp, p4_d_exp, plt, positions_opt, time_d):
     # Calcular posições de referência (média dos dados estáticos/otimização T45)
@@ -311,10 +287,10 @@ def _(np, p1_d_exp, p2_d_exp, p3_d_exp, p4_d_exp, plt, positions_opt, time_d):
     # positions_opt contém p1, p2, p3, p4 = eixo Y (VERTICAL)
     # p1_d_exp, p2_d_exp, p3_d_exp, p4_d_exp = eixo Y (VERTICAL)
 
-    p1_ref = np.mean(positions_opt['p1'])  # posição inicial média do heel (eixo Y - VERTICAL)
-    p2_ref = np.mean(positions_opt['p2'])  # posição inicial média do knee (eixo Y - VERTICAL)
-    p3_ref = np.mean(positions_opt['p3'])  # posição inicial média do trunk (eixo Y - VERTICAL)
-    p4_ref = np.mean(positions_opt['p4'])  # posição inicial média do crest (eixo Y - VERTICAL)
+    p1_ref = np.mean(positions_opt['p1'])  # posição inicial média do metatarso (eixo Y - VERTICAL)
+    p2_ref = np.mean(positions_opt['p2'])  # posição inicial média do canela (eixo Y - VERTICAL)
+    p3_ref = np.mean(positions_opt['p3'])  # posição inicial média do coxa (eixo Y - VERTICAL)
+    p4_ref = np.mean(positions_opt['p4'])  # posição inicial média do crista ilíaca (eixo Y - VERTICAL)
 
     print("=== POSIÇÕES DE REFERÊNCIA (dados estáticos - eixo Y VERTICAL) ===")
     print(f"p1_ref (heel):  {p1_ref:.4f} m (altura acima do solo)")
@@ -324,17 +300,17 @@ def _(np, p1_d_exp, p2_d_exp, p3_d_exp, p4_d_exp, plt, positions_opt, time_d):
 
     # Verificar valores iniciais dos dados experimentais
     print("\n=== VALORES INICIAIS (dados experimentais - eixo Y VERTICAL) ===")
-    print(f"p1_d_exp[0] (heel):  {p1_d_exp[0]:.4f} m (altura acima do solo)")
-    print(f"p2_d_exp[0] (knee):  {p2_d_exp[0]:.4f} m (altura acima do solo)")
-    print(f"p3_d_exp[0] (trunk): {p3_d_exp[0]:.4f} m (altura acima do solo)")
-    print(f"p4_d_exp[0] (crest): {p4_d_exp[0]:.4f} m (altura acima do solo)")
+    print(f"p1_d_exp[0] (metatarso):  {p1_d_exp[0]:.4f} m (altura acima do solo)")
+    print(f"p2_d_exp[0] (canela):  {p2_d_exp[0]:.4f} m (altura acima do solo)")
+    print(f"p3_d_exp[0] (coxa): {p3_d_exp[0]:.4f} m (altura acima do solo)")
+    print(f"p4_d_exp[0] (crista ilíaca): {p4_d_exp[0]:.4f} m (altura acima do solo)")
 
     # Converter para convenção do modelo: p_modelo = p_ref - p_experimental
     # (positivo = para baixo da referência)
     p1_d = p1_ref - p1_d_exp
-    p2_d = p2_ref - p2_d_exp
-    p3_d = p3_ref - p3_d_exp
-    p4_d = p4_ref - p4_d_exp
+    p2_d = p1_ref - p2_d_exp
+    p3_d = p1_ref - p3_d_exp
+    p4_d = p1_ref - p4_d_exp
 
     # Velocidades também precisam ter sinal invertido
     v1_d = -np.gradient(p1_d_exp, time_d)
@@ -352,7 +328,7 @@ def _(np, p1_d_exp, p2_d_exp, p3_d_exp, p4_d_exp, plt, positions_opt, time_d):
     plt.xlim(0, 10)
     plt.xlabel('tempo (s)')
     plt.ylabel('posição (m)')
-    plt.title('p1 (Heel) - Comparação de Convenções')
+    plt.title('p1 (metatarso) - Comparação de Convenções')
     plt.legend()
     plt.grid(True)
 
@@ -363,7 +339,7 @@ def _(np, p1_d_exp, p2_d_exp, p3_d_exp, p4_d_exp, plt, positions_opt, time_d):
     plt.xlim(0, 10)
     plt.xlabel('tempo (s)')
     plt.ylabel('posição (m)')
-    plt.title('p2 (Knee) - Comparação de Convenções')
+    plt.title('p2 (canela) - Comparação de Convenções')
     plt.legend()
     plt.grid(True)
 
@@ -374,7 +350,7 @@ def _(np, p1_d_exp, p2_d_exp, p3_d_exp, p4_d_exp, plt, positions_opt, time_d):
     plt.xlim(0, 10)
     plt.xlabel('tempo (s)')
     plt.ylabel('posição (m)')
-    plt.title('p3 (Trunk) - Comparação de Convenções')
+    plt.title('p3 (coxa) - Comparação de Convenções')
     plt.legend()
     plt.grid(True)
 
@@ -385,7 +361,7 @@ def _(np, p1_d_exp, p2_d_exp, p3_d_exp, p4_d_exp, plt, positions_opt, time_d):
     plt.xlim(0, 10)
     plt.xlabel('tempo (s)')
     plt.ylabel('posição (m)')
-    plt.title('p4 (Crest) - Comparação de Convenções')
+    plt.title('p4 (crista ilíaca) - Comparação de Convenções')
     plt.legend()
     plt.grid(True)
 
@@ -482,7 +458,7 @@ def _(mo):
 
     ### Equações de Otimização (Movimento VERTICAL)
 
-    **Massa 1 (pé):**
+    **Massa 1 (metatarso):**
     ```
     m1·a1 = m1·g - MGRF - k1·(p1-p3) - k2·(p1-p2) - c1·(v1-v3) - c2·(v1-v2)
     ```
@@ -492,7 +468,7 @@ def _(mo):
     Durante estático: `MGRF = peso_corpo` (constante)
     Durante dinâmico: `MGRF = Fy[i]` (variável no tempo - força vertical)
 
-    **Massa 2 (perna):**
+    **Massa 2 (canela):**
     ```
     m2·a2 = m2·g + k2·(p1-p2) - k3·(p2-p3) + c2·(v1-v2)
     ```
@@ -502,7 +478,7 @@ def _(mo):
     m3·a3 = m3·g + k1·(p1-p3) + k3·(p2-p3) - (k4+k5)·(p3-p4) + c1·(v1-v3) - c4·(v3-v4)
     ```
 
-    **Massa 4 (tronco):**
+    **Massa 4 (crista ilíaca):**
     ```
     m4·a4 = m4·g + (k4+k5)·(p3-p4) + c4·(v3-v4)
     ```
@@ -517,28 +493,28 @@ def _(mo):
 @app.cell
 def _(positions_opt):
     #Parâmetros da amostra RBDS002static:
-
-    m = 80              # kg (massa total do indivíduo)
     # IMPORTANTE: No sistema de coordenadas do modelo, positivo = para BAIXO
     # Portanto, g deve ser POSITIVO (gravidade atua na direção positiva)
+
+    m = 80              # kg (massa total do indivíduo) 
     g = 9.81            # m/s² (aceleração da gravidade - POSITIVA no sistema do modelo)
-    dt = float(positions_opt['time'][1] - positions_opt['time'][0])      # s (passo de tempo dos dados)
-    m1 = m*0.0819   # kg (massa do pé)
-    m2 = m*0.0799    # kg (massa da perna)
-    m3 = m*0.1676       # kg (massa da coxa)
-    m4 = m*0.6706       # kg (massa oscilante da parte superior do corpo - tecidos moles)
+    dt = float(positions_opt['time'][1] - positions_opt['time'][0]) # s (passo de tempo dos dados)
+    m1 = m*0.0145       # kg (massa do metatarso,foot)
+    m2 = m*0.0465       # kg (massa da canela, leg)
+    m3 = m*0.1000       # kg (massa da coxa, thigh)
+    m4 = m*0.1420       # kg (massa crista iliaca, pelvis)
 
     # IMPORTANTE: Durante dados estáticos, MGRF ≈ peso do corpo
     # Isso é usado na otimização para substituir Fg
-    peso_corpo = m * g  # N (força peso total - g já é positivo)
+    peso_corpo = m*g  # N (força peso total - g já é positivo)
 
     print(f"=== PARÂMETROS DO MODELO ===")
     print(f"Massa total: {m} kg")
     print(f"Peso do corpo: {peso_corpo:.2f} N")
-    print(f"m1 (pé): {m1:.2f} kg ({m1/m*100:.1f}%)")
-    print(f"m2 (perna): {m2:.2f} kg ({m2/m*100:.1f}%)")
+    print(f"m1 (metatarso): {m1:.2f} kg ({m1/m*100:.1f}%)")
+    print(f"m2 (canela): {m2:.2f} kg ({m2/m*100:.1f}%)")
     print(f"m3 (coxa): {m3:.2f} kg ({m3/m*100:.1f}%)")
-    print(f"m4 (tronco): {m4:.2f} kg ({m4/m*100:.1f}%)")
+    print(f"m4 (crista ilíaca): {m4:.2f} kg ({m4/m*100:.1f}%)")
     return dt, g, m1, m2, m3, m4
 
 
@@ -649,7 +625,7 @@ def _(mo):
     ### Correções Implementadas:
 
     1. **✅ Simulação de Euler Completa**:
-       - Agora simula todas as 4 massas do modelo (pé, perna, coxa, tronco)
+       - Agora simula todas as 4 massas do modelo (pé, perna, coxa, crista ilíaca)
        - Anteriormente apenas a massa 1 era simulada dinamicamente
        - Todas as equações diferenciais são resolvidas simultaneamente
 
@@ -657,7 +633,7 @@ def _(mo):
        - **Massa 1 (Pé)**: m₁a₁ = m₁g - MGRF - k₁(p₁-p₃) - k₂(p₁-p₂) - c₁(v₁-v₃) - c₂(v₁-v₂)
        - **Massa 2 (Perna)**: m₂a₂ = m₂g + k₂(p₁-p₂) - k₃(p₂-p₃) + c₂(v₁-v₂)
        - **Massa 3 (Coxa)**: m₃a₃ = m₃g + k₁(p₁-p₃) + k₃(p₂-p₃) - (k₄+k₅)(p₃-p₄) + c₁(v₁-v₃) - c₄(v₃-v₄)
-       - **Massa 4 (Tronco)**: m₄a₄ = m₄g + (k₄+k₅)(p₃-p₄) + c₄(v₃-v₄)
+       - **Massa 4 (Crista ilíaca)**: m₄a₄ = m₄g + (k₄+k₅)(p₃-p₄) + c₄(v₃-v₄)
 
     3. **✅ Verificação de Estabilidade**:
        - Análise dos autovalores da matriz de estado
@@ -670,9 +646,9 @@ def _(mo):
 
     5. **✅ Estrutura Física Correta**:
        - Massa 1: Pé (recebe força de reação do solo MGRF)
-       - Massa 2: Perna (tíbia)
+       - Massa 2: Perna (canela)
        - Massa 3: Coxa (fêmur)
-       - Massa 4: Tronco
+       - Massa 4: Tronco (crista ilíaca)
 
     ### Fluxo de Dados Corrigido:
     - **Dados Estáticos** → **Otimizações** → **Parâmetros Otimizados** ✅
@@ -803,27 +779,13 @@ def _(p1_d, p2_d, p3_d, p4_d, plt, time_d, welch):
 
 @app.cell
 def _(
-    c1_otim,
-    c2_otim,
-    c4_otim,
     dt_d,
-    g,
-    k1_otim,
-    k2_otim,
-    k3_otim,
-    k4_otim,
-    k5_otim,
     load_force_data,
-    m1,
-    m2,
-    m3,
-    m4,
     np,
     p1_d,
     p2_d,
     p3_d,
     p4_d,
-    plt,
     time_d,
     v1_d,
     v2_d,
@@ -907,155 +869,6 @@ def _(
     p4_d_interp = p4_interp(t_sim)
 
     print(f"\nMGRF interpolado para {len(MGRF_sim)} pontos da simulação")
-
-    GRF_est = np.zeros(n_steps_sim)
-    Factm1_est = np.zeros(n_steps_sim)
-    Factm2_est = np.zeros(n_steps_sim)
-    Factm3_est = np.zeros(n_steps_sim)
-    Factm4_est = np.zeros(n_steps_sim)
-
-    Kp1 = 1000000
-    Kp2 = 0
-    Kp3 = 100
-    Kp4 = 0
-
-    Ki1 = 100000
-    Ki2 = 0
-    Ki3 = 10
-    Ki4 = 0
-
-
-    inte1 = 0
-    inte2 = 0
-    inte3 = 0
-    inte4 = 0
-
-    for i in range(n_steps_sim - 1):
-        # Equação para massa 1 (pé)
-        # m1*a1 = m1*g - MGRF - k1*(p1 - p3) - k2*(p1 - p2) - c1*(v1 - v3) - c2*(v1 - v2)
-        # IMPORTANTE: g é POSITIVO (para baixo), MGRF é NEGATIVO (para cima)
-        e1 = p1_d_interp[i] - p1_sim[i]
-        e2 = p2_d_interp[i] - p2_sim[i]
-        e3 = p3_d_interp[i] - p3_sim[i]
-        e4 = p4_d_interp[i] - p4_sim[i]
-
-        inte1 = inte1 + e1*dt_sim
-        inte2 = inte2 + e2*dt_sim
-        inte3 = inte3 + e3*dt_sim
-        inte4 = inte4 + e4*dt_sim
-
-        Factm1_est[i] = Kp1*e1 + Ki1*inte1
-        Factm2_est[i] = Kp2*e2 + Ki2*inte2
-        Factm3_est[i] = Kp3*e3 + Ki3*inte3
-        Factm4_est[i] = Kp4*e4 + Ki4*inte4
-
-        GRF_est[i] = Factm1_est[i] + (m1*g + Factm1_est[i] - k1_otim * (p1_sim[i] - p3_sim[i]) -
-                       c1_otim * (v1_sim[i] - v3_sim[i]))
-
-
-        Factm1_est[i] = 0 if Factm1_est[i]<=0 else Factm1_est[i]
-        dv1dt = ((GRF_est[i] - k2_otim * (p1_sim[i] - p2_sim[i]) - c2_otim * (v1_sim[i] - v2_sim[i])) / m1)
-
-        # Equação para massa 2 (perna)
-        # m2*a2 = m2*g + k2*(p1 - p2) - k3*(p2 - p3) + c2*(v1 - v2)
-        # IMPORTANTE: g é POSITIVO (para baixo)
-        dv2dt = ((m2*g + Factm2_est[i] + c2_otim * (v1_sim[i] - v2_sim[i])) / m2)
-
-        # Equação para massa 3 (coxa)
-        # m3*a3 = m3*g + k1*(p1 - p3) + k3*(p2 - p3) - (k4 + k5)*(p3 - p4) + c1*(v1 - v3) - c4*(v3 - v4)
-        # IMPORTANTE: g é POSITIVO (para baixo)
-        dv3dt = ((m3*g + Factm3_est[i] + k1_otim * (p1_sim[i] - p3_sim[i]) +
-                       k3_otim * (p2_sim[i] - p3_sim[i]) - (k4_otim + k5_otim) * (p3_sim[i] - p4_sim[i]) +
-                       c1_otim * (v1_sim[i] - v3_sim[i]) - c4_otim * (v3_sim[i] - v4_sim[i])) / m3)
-
-        # Equação para massa 4 (tronco)
-        # m4*a4 = m4*g + (k4 + k5)*(p3 - p4) + c4*(v3 - v4)
-        # IMPORTANTE: g é POSITIVO (para baixo)
-        dv4dt = ((m4*g + Factm4_est[i] + (k4_otim + k5_otim) * (p3_sim[i] - p4_sim[i]) +
-                       c4_otim * (v3_sim[i] - v4_sim[i])) / m4)
-
-        # Atualizar velocidades (usando dt_sim, não dt_d)
-        v1_sim[i + 1] = v1_sim[i] + dv1dt * dt_sim
-        v2_sim[i + 1] = v2_sim[i] + dv2dt * dt_sim
-        v3_sim[i + 1] = v3_sim[i] + dv3dt * dt_sim
-        v4_sim[i + 1] = v4_sim[i] + dv4dt * dt_sim
-
-        # Atualizar posições (usando dt_sim, não dt_d)
-        p1_sim[i + 1] = p1_sim[i] + v1_sim[i] * dt_sim
-        p2_sim[i + 1] = p2_sim[i] + v2_sim[i] * dt_sim
-        p3_sim[i + 1] = p3_sim[i] + v3_sim[i] * dt_sim
-        p4_sim[i + 1] = p4_sim[i] + v4_sim[i] * dt_sim
-
-    print("✅ Simulação de Euler concluída!")
-    print(f"Valores finais - p1: {p1_sim[-1]:.6f}, p2: {p2_sim[-1]:.6f}, p3: {p3_sim[-1]:.6f}, p4: {p4_sim[-1]:.6f}")
-
-    # Plotar resultados comparando simulação com dados experimentais CONVERTIDOS
-    # IMPORTANTE: Simulação usa t_sim (passo menor), dados experimentais usam time_d
-    plt.figure()
-    plt.plot(t_sim, p1_sim, 'b-', linewidth=1.2, label='Simulação p1')
-    plt.plot(time_d, p1_d, color='orange', linestyle='--', linewidth=0.8, alpha=0.7, label='Experimental p1 (convertido)')
-    plt.xlabel('Tempo (s)')
-    plt.ylabel('Posição (m) - ref: inicial')
-    plt.title('Massa 1 (Pé) - Convenção do Modelo')
-    plt.legend()
-    plt.grid(True)
-    # plt.ylim(-2,2)
-    plt.xlim(0, t_final_sim)
-    plt.show()
-
-
-    plt.figure()
-    plt.plot(t_sim, p2_sim, 'g-', linewidth=1.2, label='Simulação p2')
-    plt.plot(time_d, p2_d, 'r--', linewidth=0.8, alpha=0.7, label='Experimental p2 (convertido)')
-    plt.xlabel('Tempo (s)')
-    plt.ylabel('Posição (m) - ref: inicial')
-    plt.title('Massa 2 (Perna) - Convenção do Modelo')
-    plt.legend()
-    plt.ylim(-2,2)
-    plt.grid(True)
-    plt.xlim(0, t_final_sim)
-    plt.show()
-
-
-    plt.figure()
-    plt.plot(t_sim, p3_sim, 'r-', linewidth=1.2, label='Simulação p3')
-    plt.plot(time_d, p3_d, 'm--', linewidth=0.8, alpha=0.7, label='Experimental p3 (convertido)')
-    plt.xlabel('Tempo (s)')
-    plt.ylabel('Posição (m) - ref: inicial')
-    plt.title('Massa 3 (Coxa) - Convenção do Modelo')
-    plt.legend()
-    plt.ylim(-2,2)
-    plt.grid(True)
-    plt.xlim(0, t_final_sim)
-    plt.show()
-
-
-    plt.figure()
-    plt.plot(t_sim, p4_sim, 'm-', linewidth=1.2, label='Simulação p4')
-    plt.plot(time_d, p4_d, 'k--', linewidth=0.8, alpha=0.7, label='Experimental p4 (convertido)')
-    plt.xlabel('Tempo (s)')
-    plt.ylabel('Posição (m) - ref: inicial')
-    plt.title('Massa 4 (Tronco) - Convenção do Modelo')
-    plt.legend()
-    plt.ylim(-2,2)
-    plt.grid(True)
-    plt.xlim(0, t_final_sim)
-    plt.show()
-
-    plt.figure()
-    plt.plot(t_sim, GRF_est, color='red', label='GRF simulated')
-    plt.plot(t_sim, MGRF_sim, color='blue', label='GRF experimental')
-    plt.legend()
-    plt.show()
-
-
-
-    print("\n=== NOTA IMPORTANTE ===")
-    print("Os dados experimentais (laranja/vermelho/roxo/marrom) foram CONVERTIDOS")
-    print("para a convenção do modelo Liu 2000 (referência = posição inicial).")
-    print("A linha tracejada em y=0 representa a posição inicial de referência.")
-    print(f"\nSimulação: {n_steps_sim} pontos com dt={dt_sim:.6f}s")
-    print(f"Dados experimentais: {len(time_d)} pontos com dt={dt_d:.6f}s")
     return
 
 
@@ -1147,77 +960,22 @@ def _(A_stab, dt, np, plt, solve_ivp, welch):
     x_t = sol.y[0, :]
     _fs = float(1 / dt_1)
     _f_1, _px_1 = welch(x_t, fs=_fs)
-    plt.figure(figsize=(10, 5))
+
+
+    plt.figure(figsize=(5, 3))
     plt.plot(_f_1, _px_1, color='r', linewidth=0.8)
     plt.xlabel('Frequência (Hz)')
     plt.ylabel('Amplitude (m/Hz)')
     plt.grid(True)
     plt.show()
-    plt.figure(figsize=(10, 5))
+    plt.figure(figsize=(5, 3))
     plt.plot(t_eval, x_t, color='b', linewidth=0.8)
     plt.xlabel('Tempo (s)')
     plt.ylabel('Deslocamento (m)')
     plt.grid(True)
     plt.show()
+
     return
-
-
-@app.cell
-def _():
-    ## np.roots, usar fourier para achar as raizes das eq diferenciais. para encontrar a parte real positiva com 4 lambdas
-
-    ##capitulo 2 
-
-    #Raízes reais negativas: modos amortecidos exponencialmente.
-
-    #Raízes complexas conjugadas com parte real negativa: modos oscilatórios amortecidos (sistema subamortecido).
-
-    #Raízes com parte real positiva: sistema instável.
-
-    ##possiveis soluções: aumentar o ksi ou realimentação do sistema adicionar ganho de controle
-
-
-    # Parte real (σ)
-
-    # σ < 0 → decai → sistema estável.
-
-    # σ = 0 → permanece → marginalmente estável.
-
-    # σ > 0 → cresce → instável.
-
-    # Parte imaginária (ω_d)
-
-    # Relacionada à frequência oscilatória do modo em rad/s.
-
-    # Parte imaginária das raízes ↔ frequências dos picos na FFT.
-
-    # Parte real positiva ↔ amplitude crescendo no tempo.
-
-    # Fourier não calcula λ, mas valida e ajuda a diagnosticar modos dominantes.
-
-
-    # Interpretar os picos
-
-    # Cada pico no espectro corresponde a uma frequência imaginária de um par de raízes (
-    # 𝜔𝑑/2𝜋ω
-    # Se a parte real σ > 0, a amplitude cresce exponencialmente e você verá picos crescendo com o tempo ou sinais divergindo na simulação.
-
-
-    # Nota: A massa 4 (tronco) agora está implementada corretamente na simulação de Euler
-    # Os parâmetros k4, k5 e c4 são otimizados através das equações das massas 1, 2 e 3
-    return
-
-
-# @app.cell(hide_code=True)
-# def _(mo):
-#     mo.md(r"""![image-3.png](attachment:image-3.png)""")
-#     return
-
-
-# @app.cell(hide_code=True)
-# def _(mo):
-#     mo.md(r""" """)
-#     return
 
 
 @app.cell(hide_code=True)
@@ -1409,6 +1167,7 @@ def _(
 
         # Arrays para forças estimadas
         GRF_est = np.zeros(n_steps_sim)
+        Factm1_est = np.zeros(n_steps_sim)
         Factm2_est = np.zeros(n_steps_sim)
         Factm3_est = np.zeros(n_steps_sim)
         Factm4_est = np.zeros(n_steps_sim)
@@ -1428,47 +1187,51 @@ def _(
             e4 = p4_d_interp[i] - p4_sim[i]
 
             # Atualizar integradores
-            inte1 = inte1 + e1 * dt_sim
-            inte2 = inte2 + e2 * dt_sim
-            inte3 = inte3 + e3 * dt_sim
-            inte4 = inte4 + e4 * dt_sim
+            inte1 = inte1 + e1*dt_sim
+            inte2 = inte2 + e2*dt_sim
+            inte3 = inte3 + e3*dt_sim
+            inte4 = inte4 + e4*dt_sim
 
             # Controlador PI
-            GRF_est[i] = Kp1 * e1 + Ki1 * inte1
-            Factm2_est[i] = Kp2 * e2 + Ki2 * inte2
-            Factm3_est[i] = Kp3 * e3 + Ki3 * inte3
-            Factm4_est[i] = Kp4 * e4 + Ki4 * inte4
+            Factm1_est[i] = Kp1*e1 + Ki1*inte1
+            Factm2_est[i] = Kp2*e2 + Ki2*inte2
+            Factm3_est[i] = Kp3*e3 + Ki3*inte3
+            Factm4_est[i] = Kp4*e4 + Ki4*inte4
 
             # Limitar GRF a valores positivos
             GRF_est[i] = 0 if GRF_est[i] <= 0 else GRF_est[i]
 
             # Equações de movimento
-            dv1dt = ((m1*g + GRF_est[i] - k1_otim * (p1_sim[i] - p3_sim[i]) -
-                     k2_otim * (p1_sim[i] - p2_sim[i]) - c1_otim * (v1_sim[i] - v3_sim[i]) -
-                     c2_otim * (v1_sim[i] - v2_sim[i])) / m1)
+            dv1dt = (Factm1_est[i] + (m1*g + Factm1_est[i] - k1_otim*(p1_sim[i] - p3_sim[i]) - c1_otim*(v1_sim[i] - v3_sim[i]) - k2_otim*(p1_sim[i] - p2_sim[i]) - c2_otim*(v1_sim[i] - v2_sim[i]))/m1) 
 
-            dv2dt = ((m2*g + Factm2_est[i] + c2_otim * (v1_sim[i] - v2_sim[i])) / m2)
+            if p1_sim[i] < 0.05:
+                GRF_est[i] = m1*dv1dt + Factm1_est[i] + (m1*g + Factm1_est[i] - k1_otim*(p1_sim[i] - p3_sim[i]) - c1_otim*(v1_sim[i] - v3_sim[i]) - k2_otim*(p1_sim[i] - p2_sim[i]) - c2_otim*(v1_sim[i] - v2_sim[i]))
+            else: GRF_est[i] = 0
 
-            dv3dt = ((m3*g + Factm3_est[i] + k1_otim * (p1_sim[i] - p3_sim[i]) +
-                     k3_otim * (p2_sim[i] - p3_sim[i]) - (k4_otim + k5_otim) * (p3_sim[i] - p4_sim[i]) +
-                     c1_otim * (v1_sim[i] - v3_sim[i]) - c4_otim * (v3_sim[i] - v4_sim[i])) / m3)
 
-            dv4dt = ((m4*g + Factm4_est[i] + (k4_otim + k5_otim) * (p3_sim[i] - p4_sim[i]) +
-                     c4_otim * (v3_sim[i] - v4_sim[i])) / m4)
+
+            dv2dt = ((m2*g + Factm2_est[i] + c2_otim*(v1_sim[i] - v2_sim[i]))/m2)
+
+            dv3dt = ((m3*g + Factm3_est[i] + k1_otim*(p1_sim[i] - p3_sim[i]) +
+                     k3_otim*(p2_sim[i] - p3_sim[i]) - (k4_otim + k5_otim)*(p3_sim[i] - p4_sim[i]) +
+                     c1_otim*(v1_sim[i] - v3_sim[i]) - c4_otim*(v3_sim[i] - v4_sim[i])) / m3)
+
+            dv4dt = ((m4*g + Factm4_est[i] + (k4_otim + k5_otim)*(p3_sim[i] - p4_sim[i]) +
+                     c4_otim*(v3_sim[i] - v4_sim[i])) / m4)
 
             # Atualizar velocidades
-            v1_sim[i + 1] = v1_sim[i] + dv1dt * dt_sim
-            v2_sim[i + 1] = v2_sim[i] + dv2dt * dt_sim
-            v3_sim[i + 1] = v3_sim[i] + dv3dt * dt_sim
-            v4_sim[i + 1] = v4_sim[i] + dv4dt * dt_sim
+            v1_sim[i + 1] = v1_sim[i] + dv1dt*dt_sim
+            v2_sim[i + 1] = v2_sim[i] + dv2dt*dt_sim
+            v3_sim[i + 1] = v3_sim[i] + dv3dt*dt_sim
+            v4_sim[i + 1] = v4_sim[i] + dv4dt*dt_sim
 
             # Atualizar posições
-            p1_sim[i + 1] = p1_sim[i] + v1_sim[i] * dt_sim
-            p2_sim[i + 1] = p2_sim[i] + v2_sim[i] * dt_sim
-            p3_sim[i + 1] = p3_sim[i] + v3_sim[i] * dt_sim
-            p4_sim[i + 1] = p4_sim[i] + v4_sim[i] * dt_sim
+            p1_sim[i + 1] = p1_sim[i] + v1_sim[i]*dt_sim
+            p2_sim[i + 1] = p2_sim[i] + v2_sim[i]*dt_sim
+            p3_sim[i + 1] = p3_sim[i] + v3_sim[i]*dt_sim
+            p4_sim[i + 1] = p4_sim[i] + v4_sim[i]*dt_sim
 
-        return GRF_est, Factm2_est, Factm3_est, Factm4_est, p1_sim, p2_sim, p3_sim, p4_sim, t_sim
+        return GRF_est, Factm1_est, Factm2_est, Factm3_est, Factm4_est, p1_sim, p2_sim, p3_sim, p4_sim, t_sim
 
     print("✅ Função de simulação com controlador PI criada!")
     return optuna, scipy_interp1d, simulate_with_pi_controller
@@ -1508,7 +1271,7 @@ def _(
 
         try:
             # Simular com os parâmetros sugeridos
-            GRF_est, Factm2_est, Factm3_est, Factm4_est, p1_sim, p2_sim, p3_sim, p4_sim, t_sim = simulate_with_pi_controller(
+            GRF_est, Factm1_est, Factm2_est, Factm3_est, Factm4_est, p1_sim, p2_sim, p3_sim, p4_sim, t_sim = simulate_with_pi_controller(
                 Kp1, Kp2, Kp3, Kp4, Ki1, Ki2, Ki3, Ki4, MGRF_for_optim
             )
 
@@ -1582,7 +1345,7 @@ def _(objective, optuna):
 
     # Usar TPE sampler com multivariate=True para capturar correlações entre parâmetros
     sampler = optuna.samplers.TPESampler(
-        n_startup_trials=50,  # Primeiros 50 trials são random para exploração
+        n_startup_trials=50,   # Primeiros 50 trials são random para exploração
         multivariate=True,     # Considera correlações entre parâmetros
         seed=42                # Seed para reprodutibilidade
     )
@@ -1593,7 +1356,7 @@ def _(objective, optuna):
         study_name='pi_controller_optimization'
     )
 
-    study.optimize(objective, n_trials=500, show_progress_bar=True)
+    study.optimize(objective, n_trials=20, show_progress_bar=True)
 
     # Verificar se há trials completos antes de acessar resultados
     if len(study.trials) > 0 and study.best_trial is not None:
@@ -1612,22 +1375,15 @@ def _(objective, optuna):
         for param, value in study.best_params.items():
             print(f"  {param}: {value:.2f}")
 
-        # Plotar histórico de otimização
+        #Plotar histórico de otimização
         print("\n📈 Gerando gráficos de otimização...")
         fig = optuna.visualization.plot_optimization_history(study)
         fig.show()
 
-        # Plotar importância dos parâmetros (FYI: pode variar entre execuções com poucos trials)
+        #Plotar importância dos parâmetros (FYI: pode variar entre execuções com poucos trials)
         fig2 = optuna.visualization.plot_param_importances(study)
         fig2.show()
 
-        # Plotar slice plot (mostra como cada parâmetro afeta o objetivo)
-        fig3 = optuna.visualization.plot_slice(study)
-        fig3.show()
-
-        # Plotar parallel coordinate (mostra relações entre parâmetros)
-        fig4 = optuna.visualization.plot_parallel_coordinate(study)
-        fig4.show()
     else:
         print("\n⚠️ Nenhum trial foi completado com sucesso.")
     return (study,)
@@ -1668,7 +1424,7 @@ def _(
         Ki4_opt = best_params['Ki4']
 
         # Simular com os melhores parâmetros
-        GRF_est_opt, Factm2_est_opt, Factm3_est_opt, Factm4_est_opt, p1_sim_opt, p2_sim_opt, p3_sim_opt, p4_sim_opt, t_sim_opt = simulate_with_pi_controller(
+        GRF_est_opt, Factm1_est_opt, Factm2_est_opt, Factm3_est_opt, Factm4_est_opt, p1_sim_opt, p2_sim_opt, p3_sim_opt, p4_sim_opt, t_sim_opt = simulate_with_pi_controller(
             Kp1_opt, Kp2_opt, Kp3_opt, Kp4_opt,
             Ki1_opt, Ki2_opt, Ki3_opt, Ki4_opt,
             MGRF_for_optim
@@ -1682,7 +1438,7 @@ def _(
         # Plotar comparação GRF
         plt.figure(figsize=(12, 6))
         plt.plot(t_sim_opt, MGRF_sim_opt, color='blue', label='GRF Measured (MGRF)', linewidth=2)
-        plt.plot(t_sim_opt, GRF_est_opt, color='red', label='GRF Estimated (optimized)', linewidth=1.5, alpha=0.7)
+        plt.plot(t_sim_opt, Factm1_est_opt + Factm2_est_opt, color='red', label='GRF Estimated (optimized)', linewidth=1.5, alpha=0.7)
         plt.xlabel('Time (s)')
         plt.ylabel('Force (N)')
         plt.title('Comparação: GRF Measured vs GRF Estimated')
@@ -1700,14 +1456,14 @@ def _(
         plt.ylabel('Força (N)')
         plt.xlim(0, 2)
         plt.xlim(0, 2)
-        plt.title('GRF (Força na Massa 1 - Pé)')
+        plt.title('Factm1 (Força na Massa 1 - Metatartso)')
         plt.grid(True)
 
         plt.subplot(2, 2, 2)
         plt.plot(t_sim_opt, Factm2_est_opt, color='green', linewidth=1.5)
         plt.xlabel('Tempo (s)')
         plt.ylabel('Força (N)')
-        plt.title('Factm2 (Força na Massa 2 - Perna)')
+        plt.title('Factm2 (Força na Massa 2 - Canela)')
         plt.xlim(0, 2)
         plt.grid(True)
 
@@ -1723,7 +1479,7 @@ def _(
         plt.plot(t_sim_opt, Factm4_est_opt, color='purple', linewidth=1.5)
         plt.xlabel('Tempo (s)')
         plt.ylabel('Força (N)')
-        plt.title('Factm4 (Força na Massa 4 - Tronco)')
+        plt.title('Factm4 (Força na Massa 4 - Crista Ilíaca)')
         plt.xlim(0, 2)
         plt.grid(True)
 
@@ -1755,7 +1511,7 @@ def _(
         plt.plot(t_sim_opt, p1_sim_opt, 'r-', linewidth=1.5, label='Simulado (Otimizado)')
         plt.xlabel('Tempo (s)')
         plt.ylabel('Posição (m)')
-        plt.title('p1 - Posição da Massa 1 (Pé)')
+        plt.title('p1 - Posição da Massa 1 (Metatarso)')
         plt.legend()
         plt.grid(True)
         plt.xlim(0, 2)
@@ -1765,7 +1521,7 @@ def _(
         plt.plot(t_sim_opt, p2_sim_opt, 'r-', linewidth=1.5, label='Simulado (Otimizado)')
         plt.xlabel('Tempo (s)')
         plt.ylabel('Posição (m)')
-        plt.title('p2 - Posição da Massa 2 (Perna)')
+        plt.title('p2 - Posição da Massa 2 (Canela)')
         plt.legend()
         plt.grid(True)
         plt.xlim(0, 2)
@@ -1785,7 +1541,7 @@ def _(
         plt.plot(t_sim_opt, p4_sim_opt, 'r-', linewidth=1.5, label='Simulado (Otimizado)')
         plt.xlabel('Tempo (s)')
         plt.ylabel('Posição (m)')
-        plt.title('p4 - Posição da Massa 4 (Tronco)')
+        plt.title('p4 - Posição da Massa 4 (Crista ilíaca)')
         plt.legend()
         plt.grid(True)
         plt.xlim(0, 2)
@@ -1887,7 +1643,7 @@ def _(mo):
 
     ### 💡 Observações:
 
-    - **p1 (Pé)**: Geralmente tem o melhor rastreamento (menor erro) pois é onde aplicamos a GRF
+    - **p1 (metatarso)**: Geralmente tem o melhor rastreamento (menor erro) pois é onde aplicamos a GRF
     - **p2, p3, p4**: O rastreamento depende dos ganhos Kp2-4 e Ki2-4
     - Se alguma posição não está sendo bem rastreada, pode ser necessário ajustar os intervalos
       de busca dos parâmetros correspondentes na otimização
@@ -1904,22 +1660,22 @@ def _(mo):
 
     O gráfico acima mostra as forças estimadas pelo controlador PI para cada uma das 4 massas do modelo:
 
-    ### 🔴 GRF (Ground Reaction Force) - Massa 1 (Pé)
+    ### 🔴 GRF (Ground Reaction Force) - Massa 1 (Metatarso)
     - **Força de reação do solo** aplicada no pé
     - É a força que estamos tentando estimar com maior precisão
     - Comparada com os dados medidos (MGRF) para validação
 
-    ### 🟢 Factm2 - Massa 2 (Perna/Tíbia)
+    ### 🟢 Factm2 - Massa 2 (Canela)
     - Força de controle aplicada na massa da perna
     - Ajuda a corrigir o erro de posição da perna em relação aos dados experimentais
     - Pode ser zero ou pequena se Kp2 e Ki2 forem pequenos
 
-    ### 🟠 Factm3 - Massa 3 (Coxa/Fêmur)
+    ### 🟠 Factm3 - Massa 3 (Coxa)
     - Força de controle aplicada na massa da coxa
     - Ajuda a corrigir o erro de posição da coxa em relação aos dados experimentais
     - Pode ser zero ou pequena se Kp3 e Ki3 forem pequenos
 
-    ### 🟣 Factm4 - Massa 4 (Tronco)
+    ### 🟣 Factm4 - Massa 4 (Crista Ilíaca)
     - Força de controle aplicada na massa do tronco
     - Ajuda a corrigir o erro de posição do tronco em relação aos dados experimentais
     - Pode ser zero ou pequena se Kp4 e Ki4 forem pequenos
